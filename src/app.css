@@ -244,11 +244,175 @@ button:disabled {
   word-break: break-all;
 }
 
-.diag-title {
+
+header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
+nav {
+  display: flex;
+  background: var(--card);
+  border-radius: 12px;
+  padding: 4px;
+}
+
+nav button {
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  min-height: 36px;
+  padding: 6px 16px;
+}
+
+nav button.on {
+  background: var(--accent);
+  color: #fff;
+  font-weight: 600;
+}
+
+/* 타이머 화면의 작은 카메라 미리보기 */
+.stage.compact {
+  width: 132px;
+  max-height: none;
+  margin-left: auto;
+  margin-right: auto;
+  border-width: 3px;
+}
+
+.stage.compact .overlay {
+  font-size: 0.7rem;
+  padding: 6px;
+}
+
+/* 영상 요소는 카메라 연결을 위해 항상 문서에 남겨 둔다 */
+.stage.hidden {
+  display: none;
+}
+
+.timer {
+  margin-top: 16px;
+  text-align: center;
+}
+
+.timer .plan {
+  color: var(--muted);
+  margin: 24px 0 12px;
+}
+
+.timer .state {
+  font-size: 1.2rem;
+  font-weight: 700;
+  margin: 0;
+}
+
+.timer .time {
+  font-size: clamp(4rem, 24vw, 7rem);
+  font-weight: 700;
+  line-height: 1.1;
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.timer .caption {
+  color: var(--muted);
+  margin: 0 0 12px;
+}
+
+.timer.focused .state,
+.timer.focused .time {
+  color: var(--focused);
+}
+.timer.warning .state,
+.timer.warning .time {
+  color: var(--warning);
+}
+.timer.distracted .state,
+.timer.distracted .time {
+  color: var(--distracted);
+}
+.timer.rest .state,
+.timer.rest .time {
+  color: var(--accent);
+}
+
+.bar {
+  height: 8px;
+  border-radius: 4px;
+  background: var(--card);
+  overflow: hidden;
+}
+
+.bar div {
+  height: 100%;
+  background: currentColor;
+  transition: width 0.3s linear;
+}
+
+.timer.focused .bar {
+  color: var(--focused);
+}
+.timer.warning .bar {
+  color: var(--warning);
+}
+.timer.distracted .bar {
+  color: var(--distracted);
+}
+.timer.rest .bar {
+  color: var(--accent);
+}
+
+.timer .card {
+  text-align: left;
+}
+
+.timer .actions button {
+  flex: 1;
+}
+
+.timer .hint {
   margin-top: 16px;
 }
 
-.diag-btn {
-  margin-top: 10px;
+button.big {
+  font-size: 1.3rem;
+  padding: 18px 40px;
+  border-radius: 16px;
+}
+
+button.wide {
   width: 100%;
+  margin-top: 10px;
+}
+
+.stepper {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.stepper div {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.stepper b {
+  min-width: 3.6em;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.stepper button {
+  padding: 6px 0;
+  width: 40px;
+  min-height: 40px;
+}
+
+.card .actions {
+  flex-wrap: wrap;
 }
