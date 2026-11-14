@@ -237,3 +237,18 @@ button:disabled {
   margin-right: 8px;
   font-variant-numeric: tabular-nums;
 }
+
+.error-box {
+  background: rgba(239, 83, 80, 0.14);
+  border-color: rgba(239, 83, 80, 0.5);
+  word-break: break-all;
+}
+
+.diag-title {
+  margin-top: 16px;
+}
+
+.diag-btn {
+  margin-top: 10px;
+  width: 100%;
+}

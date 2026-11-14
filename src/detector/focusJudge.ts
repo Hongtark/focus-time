@@ -1,4 +1,5 @@
 // 집중 판별 로직. 카메라·브라우저와 무관한 순수 계산이라 단독으로 시험할 수 있다.
+import { relativeAngles, type Rot } from './pose'
 
 /** 한 번의 얼굴 측정값 */
 export interface FaceSample {
@@ -6,18 +7,14 @@ export interface FaceSample {
   t: number
   /** 얼굴이 화면에 잡혔는지 */
   present: boolean
-  /** 좌우 회전(도). 부호는 방향, 판별에는 기준값과의 차이만 쓴다 */
-  yaw: number
-  /** 상하 회전(도). 양수 = 고개 숙임 */
-  pitch: number
+  /** 카메라 기준 얼굴 회전 */
+  rot: Rot
   /** 눈 감김 정도 0~1 (양쪽 중 덜 감긴 쪽) */
   eyesClosed: number
 }
 
-export interface Baseline {
-  yaw: number
-  pitch: number
-}
+/** 기준(공부) 자세일 때의 얼굴 회전 */
+export type Baseline = Rot
 
 export interface JudgeSettings {
   /** 기준 자세에서 좌우로 이만큼(도) 넘게 돌리면 비집중 */
@@ -80,8 +77,9 @@ export class FocusJudge {
       raw = 'absent'
       this.eyesClosedSince = null
     } else {
-      dYaw = s.yaw - base.yaw
-      dPitch = s.pitch - base.pitch
+      const rel = relativeAngles(base, s.rot)
+      dYaw = rel.yaw
+      dPitch = rel.pitch
       if (s.eyesClosed >= cfg.blinkThreshold) {
         if (this.eyesClosedSince === null) this.eyesClosedSince = s.t
       } else {

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { createFaceDetector, type FaceDetector } from './detector/faceDetector'
+import { createFaceDetector, type Delegate, type FaceDetector } from './detector/faceDetector'
 import {
   DEFAULT_SETTINGS,
   FocusJudge,
@@ -9,6 +9,7 @@ import {
   type JudgeSettings,
   type RawState,
 } from './detector/focusJudge'
+import { anglesFromRot, IDENTITY, representative } from './detector/pose'
 import { load, save } from './platform/storage'
 import { keepScreenOn, type WakeLockHandle } from './platform/wakeLock'
 
@@ -16,6 +17,10 @@ import { keepScreenOn, type WakeLockHandle } from './platform/wakeLock'
 const DETECT_INTERVAL_MS = 200
 const CALIBRATION_MS = 3000
 const LOG_LIMIT = 30
+/** 판별 오류가 이만큼 연달아 나면 연산 장치를 CPU로 바꾼다 */
+const ERRORS_BEFORE_CPU = 3
+/** 화면에 표시해 폰이 최신 배포본을 열었는지 확인하는 용도 */
+const APP_VERSION = '0.1.1'
 
 const RAW_LABEL: Record<RawState, string> = {
   focused: '공부 자세',
@@ -36,6 +41,9 @@ interface Live {
   sample: FaceSample
   judgement: Judgement
   fps: number
+  /** 지금까지 판별한 횟수. 숫자가 멈춰 있으면 판별이 돌지 않는 것이다 */
+  frames: number
+  video: string
 }
 
 const SLIDERS: { key: keyof JudgeSettings; label: string; min: number; max: number; step: number; unit: string }[] = [
@@ -54,15 +62,17 @@ export default function App() {
   const [live, setLive] = useState<Live | null>(null)
   const [log, setLog] = useState<LogEntry[]>([])
   const [settings, setSettings] = useState<JudgeSettings>(() => load('settings', DEFAULT_SETTINGS))
-  const [baseline, setBaseline] = useState<Baseline | null>(() => load<Baseline | null>('baseline', null))
+  const [baseline, setBaseline] = useState<Baseline | null>(() => load<Baseline | null>('baseline2', null))
   const [calibrating, setCalibrating] = useState(false)
-  const [info, setInfo] = useState({ delegate: '', wakeLock: false })
+  const [info, setInfo] = useState<{ delegate: Delegate | ''; wakeLock: boolean }>({ delegate: '', wakeLock: false })
+  const [tickError, setTickError] = useState('')
 
   // 판별 루프는 한 번 시작하면 계속 도므로 최신 설정은 ref로 읽는다.
   const settingsRef = useRef(settings)
   const baselineRef = useRef(baseline)
   const calibRef = useRef<{ until: number; samples: FaceSample[] } | null>(null)
   const cleanupRef = useRef<() => void>(() => {})
+  const switchDelegateRef = useRef<(d: Delegate) => void>(() => {})
 
   useEffect(() => {
     settingsRef.current = settings
@@ -70,7 +80,7 @@ export default function App() {
   }, [settings])
   useEffect(() => {
     baselineRef.current = baseline
-    if (baseline) save('baseline', baseline)
+    if (baseline) save('baseline2', baseline)
   }, [baseline])
   useEffect(() => () => cleanupRef.current(), [])
 
@@ -84,6 +94,7 @@ export default function App() {
     setError('')
     let stream: MediaStream | null = null
     let detector: FaceDetector | null = null
+    let switching = false
     let wake: WakeLockHandle | null = null
     let timer = 0
     try {
@@ -102,11 +113,43 @@ export default function App() {
       let lastVerdict = 'focused'
       let lastT = 0
       let fps = 0
+      let frames = 0
+      let errors = 0
+
+      const switchDelegate = async (d: Delegate) => {
+        if (switching) return
+        switching = true
+        try {
+          const next = await createFaceDetector(d)
+          detector?.close()
+          detector = next
+          errors = 0
+          setTickError('')
+          setInfo((i) => ({ ...i, delegate: next.delegate }))
+          addLog(`연산 장치를 ${next.delegate}로 바꿈`, 'info')
+        } catch (e) {
+          setTickError(`연산 장치 전환 실패: ${e instanceof Error ? e.message : String(e)}`)
+        } finally {
+          switching = false
+        }
+      }
+      switchDelegateRef.current = (d) => void switchDelegate(d)
 
       const tick = () => {
-        if (video.readyState < 2 || document.visibilityState !== 'visible') return
+        if (switching || video.readyState < 2 || document.visibilityState !== 'visible') return
         const t = performance.now()
-        const sample = detector!.detect(video, t)
+        let sample: FaceSample
+        try {
+          sample = detector!.detect(video, t)
+          errors = 0
+        } catch (e) {
+          // 여기서 멈추면 화면이 마지막 판정에 얼어붙으므로 오류를 드러내고 CPU로 넘어간다.
+          errors++
+          setTickError(`판별 오류: ${e instanceof Error ? e.message : String(e)}`)
+          if (errors >= ERRORS_BEFORE_CPU && detector!.delegate === 'GPU') void switchDelegate('CPU')
+          return
+        }
+        frames++
 
         const calib = calibRef.current
         if (calib) {
@@ -115,21 +158,20 @@ export default function App() {
             calibRef.current = null
             setCalibrating(false)
             if (calib.samples.length >= 5) {
-              const avg = (f: (s: FaceSample) => number) =>
-                calib.samples.reduce((a, s) => a + f(s), 0) / calib.samples.length
-              const b = { yaw: avg((s) => s.yaw), pitch: avg((s) => s.pitch) }
+              const b = representative(calib.samples.map((s) => s.rot))
+              const a = anglesFromRot(b)
               baselineRef.current = b
               setBaseline(b)
               judge.reset()
               lastVerdict = 'focused'
-              addLog(`기준 자세 저장 (좌우 ${b.yaw.toFixed(0)}°, 상하 ${b.pitch.toFixed(0)}°)`, 'info')
+              addLog(`기준 자세 저장 (카메라 기준 좌우 ${a.yaw.toFixed(0)}°, 상하 ${a.pitch.toFixed(0)}°)`, 'info')
             } else {
-              addLog('기준 자세 저장 실패: 얼굴이 잘 보이지 않았습니다', 'info')
+              addLog(`기준 자세 저장 실패: 3초 동안 얼굴이 ${calib.samples.length}번만 잡혔습니다`, 'info')
             }
           }
         }
 
-        const base = baselineRef.current ?? { yaw: 0, pitch: 0 }
+        const base = baselineRef.current ?? IDENTITY
         const judgement = judge.update(sample, base, settingsRef.current)
         if (judgement.verdict !== lastVerdict) {
           lastVerdict = judgement.verdict
@@ -141,7 +183,7 @@ export default function App() {
         }
         if (lastT) fps = fps * 0.8 + (1000 / (t - lastT)) * 0.2
         lastT = t
-        setLive({ sample, judgement, fps })
+        setLive({ sample, judgement, fps, frames, video: `${video.videoWidth}×${video.videoHeight}` })
       }
       timer = window.setInterval(tick, DETECT_INTERVAL_MS)
 
@@ -168,6 +210,7 @@ export default function App() {
     cleanupRef.current = () => {}
     if (videoRef.current) videoRef.current.srcObject = null
     setLive(null)
+    setTickError('')
     setPhase('idle')
   }, [])
 
@@ -177,6 +220,7 @@ export default function App() {
   }
 
   const j = live?.judgement
+  const abs = live?.sample.present ? anglesFromRot(live.sample.rot) : null
   const distracted = j?.verdict === 'distracted'
   // 유예 시간이 흐르는 중: 자세는 벗어났지만 아직 일시정지 전
   const warning = j && !distracted && j.raw !== 'focused'
@@ -193,7 +237,7 @@ export default function App() {
     <main>
       <header>
         <h1>집중 판별 시험</h1>
-        <p className="sub">1단계 · 카메라 인식과 판별 기준값 확인</p>
+        <p className="sub">1단계 · 카메라 인식과 판별 기준값 확인 · v{APP_VERSION}</p>
       </header>
 
       <section className={`stage ${phase === 'running' ? statusClass : ''}`}>
@@ -221,6 +265,7 @@ export default function App() {
             </button>
             <button onClick={stop}>정지</button>
           </div>
+          {tickError && <p className="notice error-box">{tickError}</p>}
           {!baseline && (
             <p className="notice">
               기준 자세가 없어 카메라 정면을 기준으로 판별 중입니다. 공부하는 자세를 취하고 「기준 자세 잡기」를
@@ -246,6 +291,22 @@ export default function App() {
               <Metric label="판별 속도" value={live ? `${live.fps.toFixed(1)}회/초` : '-'} />
               <Metric label="연산 / 화면 유지" value={`${info.delegate} / ${info.wakeLock ? '켜짐' : '미지원'}`} />
             </dl>
+            <h2 className="diag-title">진단용</h2>
+            <dl className="metrics">
+              <Metric
+                label="카메라 기준 각도"
+                value={abs ? `${abs.yaw.toFixed(0)} / ${abs.pitch.toFixed(0)} / ${abs.roll.toFixed(0)}` : '-'}
+                limit={undefined}
+              />
+              <Metric label="판별 횟수 / 영상 크기" value={live ? `${live.frames} / ${live.video}` : '-'} />
+            </dl>
+            <p className="hint">카메라 기준 각도는 좌우 / 상하 / 기울기 순서입니다.</p>
+            <button
+              className="diag-btn"
+              onClick={() => switchDelegateRef.current(info.delegate === 'GPU' ? 'CPU' : 'GPU')}
+            >
+              연산 장치를 {info.delegate === 'GPU' ? 'CPU' : 'GPU'}로 바꾸기
+            </button>
           </section>
         </>
       )}
