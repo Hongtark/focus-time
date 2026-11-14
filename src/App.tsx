@@ -3,14 +3,19 @@ import { useFocusCamera, type FocusCamera } from './camera/useFocusCamera'
 import { DEFAULT_SETTINGS, type Judgement, type JudgeSettings } from './detector/focusJudge'
 import { alertUser, unlockAudio } from './platform/alert'
 import { load, save } from './platform/storage'
+import { recordFromSnapshot, type SessionRecord } from './records/stats'
+import { addRecord, recoverActive, saveActive } from './records/store'
 import { DEFAULT_SESSION, SessionEngine, type SessionConfig, type SessionEvent } from './session/sessionEngine'
 import { SettingsPanel } from './ui/SettingsPanel'
+import { StatsPanel } from './ui/StatsPanel'
 import { TimerPanel, type SessionStage } from './ui/TimerPanel'
 
 /** 화면에 표시해 폰이 최신 배포본을 열었는지 확인하는 용도 */
-const APP_VERSION = '0.2.0'
+const APP_VERSION = '0.3.0'
+/** 진행 중인 학습을 이 간격으로 중간 저장한다 */
+const AUTOSAVE_MS = 5000
 
-type Tab = 'timer' | 'settings'
+type Tab = 'timer' | 'stats' | 'settings'
 
 export default function App() {
   const [tab, setTab] = useState<Tab>('timer')
@@ -22,6 +27,10 @@ export default function App() {
   const engineRef = useRef(new SessionEngine())
   const [snap, setSnap] = useState(() => engineRef.current.snapshot(Date.now(), config))
   const [summary, setSummary] = useState<typeof snap | null>(null)
+  // 지난번에 끝내지 못하고 닫힌 학습이 있으면 이때 기록으로 옮겨진다.
+  const [records, setRecords] = useState<SessionRecord[]>(() => recoverActive())
+  const [activeRecord, setActiveRecord] = useState<SessionRecord | null>(null)
+  const lastSaveRef = useRef(0)
 
   // 판별 루프는 한 번 시작하면 계속 도므로 최신 값은 ref로 읽는다.
   const settingsRef = useRef(settings)
@@ -62,13 +71,35 @@ export default function App() {
       const engine = engineRef.current
       if (engine.snapshot(now, configRef.current).phase === 'idle') return
       handleEvents(engine.tick(now, j && { raw: j.raw, verdict: j.verdict }, configRef.current))
-      setSnap(engine.snapshot(now, configRef.current))
+      const next = engine.snapshot(now, configRef.current)
+      setSnap(next)
+      if (now - lastSaveRef.current >= AUTOSAVE_MS) {
+        lastSaveRef.current = now
+        const rec = recordFromSnapshot(next, now)
+        saveActive(rec)
+        setActiveRecord(rec)
+      }
     },
     [handleEvents],
   )
 
   const cam = useFocusCamera({ settingsRef, onTick })
   camRef.current = cam
+
+  // 페이지가 닫히거나 가려지는 순간의 상태까지 남긴다.
+  useEffect(() => {
+    const flush = () => {
+      const now = Date.now()
+      const last = engineRef.current.snapshot(now, configRef.current)
+      if (last.phase !== 'idle') saveActive(recordFromSnapshot(last, now))
+    }
+    window.addEventListener('pagehide', flush)
+    document.addEventListener('visibilitychange', flush)
+    return () => {
+      window.removeEventListener('pagehide', flush)
+      document.removeEventListener('visibilitychange', flush)
+    }
+  }, [])
 
   const startSession = async () => {
     const runId = ++runIdRef.current
@@ -90,6 +121,7 @@ export default function App() {
     setCalibrationRetry(false)
     const now = Date.now()
     engineRef.current.start(now)
+    lastSaveRef.current = now
     setSnap(engineRef.current.snapshot(now, configRef.current))
     cam.addLog('학습 시작')
     setStage('active')
@@ -98,8 +130,13 @@ export default function App() {
   const endSession = () => {
     runIdRef.current++
     const engine = engineRef.current
-    const last = engine.snapshot(Date.now(), configRef.current)
-    if (last.phase !== 'idle') setSummary(last)
+    const now = Date.now()
+    const last = engine.snapshot(now, configRef.current)
+    if (last.phase !== 'idle') {
+      setSummary(last)
+      setRecords(addRecord(recordFromSnapshot(last, now)))
+    }
+    setActiveRecord(null)
     engine.end()
     cam.stop()
     setCalibrationRetry(false)
@@ -123,7 +160,8 @@ export default function App() {
   const judging = running && (stage !== 'active' || snap.phase !== 'break')
   const tone = !judging || !j ? '' : j.verdict === 'distracted' ? 'distracted' : j.raw !== 'focused' ? 'warning' : 'focused'
   // 타이머 화면에서는 카메라가 켜져 있을 때만 작은 미리보기로 보여준다.
-  const stageClass = ['stage', tab === 'timer' ? 'compact' : '', running || cam.phase === 'loading' ? '' : 'hidden', tone]
+  const cameraOn = running || cam.phase === 'loading'
+  const stageClass = ['stage', tab === 'timer' ? 'compact' : '', cameraOn && tab !== 'stats' ? '' : 'hidden', tone]
     .filter(Boolean)
     .join(' ')
 
@@ -137,6 +175,9 @@ export default function App() {
         <nav>
           <button className={tab === 'timer' ? 'on' : ''} onClick={() => setTab('timer')}>
             타이머
+          </button>
+          <button className={tab === 'stats' ? 'on' : ''} onClick={() => setTab('stats')}>
+            통계
           </button>
           <button className={tab === 'settings' ? 'on' : ''} onClick={() => setTab('settings')}>
             설정
@@ -166,6 +207,8 @@ export default function App() {
           onBreakNow={breakNow}
           onResume={resume}
         />
+      ) : tab === 'stats' ? (
+        <StatsPanel records={records} active={activeRecord} onRecords={setRecords} />
       ) : (
         <SettingsPanel
           cam={cam}

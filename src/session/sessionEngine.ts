@@ -44,7 +44,14 @@ export interface SessionSnapshot {
   /** 학습 중 일시정지 상태인지 */
   paused: boolean
   startedAt: number
+  /** 끊기지 않고 가장 오래 집중한 시간 */
+  longestFocusMs: number
+  /** 시각(0~23시)별 집중·중단 시간 */
+  byHour: HourBuckets
 }
+
+/** 시(0~23) → [집중 ms, 중단 ms] */
+export type HourBuckets = Record<number, [number, number]>
 
 /** 한 번의 tick이 인정하는 최대 시간. 화면이 꺼져 있던 동안을 집중 시간으로 치지 않기 위함이다. */
 const MAX_TICK_MS = 1000
@@ -65,11 +72,16 @@ export class SessionEngine {
   private readySince: number | null = null
   private lastTick = 0
   private startedAt = 0
+  private streakMs = 0
+  private longestMs = 0
+  private byHour: HourBuckets = {}
 
   start(now: number) {
     this.phase = 'study'
     this.focusMs = this.pausedMs = this.interruptions = this.sets = 0
     this.startedAt = now
+    this.streakMs = this.longestMs = 0
+    this.byHour = {}
     this.beginStudy(now)
   }
 
@@ -99,10 +111,12 @@ export class SessionEngine {
 
     if (this.phase === 'study') {
       const dt = Math.min(elapsed, MAX_TICK_MS)
+      const hour = new Date(now).getHours()
       // 관찰하지 못한 시간은 집중으로 인정하지 않고 중단 시간에 더한다.
-      this.pausedMs += elapsed - dt
+      this.addPaused(hour, elapsed - dt)
       if (!input) {
-        this.pausedMs += dt
+        this.addPaused(hour, dt)
+        this.streakMs = 0
         return events
       }
       if (input.verdict === 'focused') {
@@ -112,7 +126,11 @@ export class SessionEngine {
         }
         this.focusMs += dt
         this.blockFocusMs += dt
+        this.bucket(hour)[0] += dt
         this.pendingMs = input.raw === 'focused' ? 0 : this.pendingMs + dt
+        // 유예 중인 시간은 아직 확정된 집중이 아니므로 최장 기록에는 넣지 않는다.
+        this.streakMs += dt
+        this.longestMs = Math.max(this.longestMs, this.streakMs - this.pendingMs)
       } else {
         if (!this.paused) {
           this.paused = true
@@ -121,11 +139,14 @@ export class SessionEngine {
           const back = Math.min(this.pendingMs, this.blockFocusMs)
           this.focusMs -= back
           this.blockFocusMs -= back
-          this.pausedMs += back
+          const b = this.bucket(hour)
+          b[0] = Math.max(0, b[0] - back)
+          this.addPaused(hour, back)
           this.pendingMs = 0
+          this.streakMs = 0
           events.push('paused')
         }
-        this.pausedMs += dt
+        this.addPaused(hour, dt)
       }
       if (this.blockFocusMs >= cfg.studyMin * 60_000) {
         this.sets++
@@ -160,10 +181,23 @@ export class SessionEngine {
       breakRemainingMs: this.phase === 'break' ? Math.max(0, this.breakEndsAt - now) : 0,
       paused: this.phase === 'study' && this.paused,
       startedAt: this.startedAt,
+      longestFocusMs: this.longestMs,
+      byHour: this.byHour,
     }
   }
 
+  private bucket(hour: number): [number, number] {
+    return (this.byHour[hour] ??= [0, 0])
+  }
+
+  private addPaused(hour: number, ms: number) {
+    if (ms <= 0) return
+    this.pausedMs += ms
+    this.bucket(hour)[1] += ms
+  }
+
   private beginStudy(now: number) {
+    this.streakMs = 0
     this.blockFocusMs = 0
     this.pendingMs = 0
     this.paused = false

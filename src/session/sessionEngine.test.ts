@@ -102,4 +102,19 @@ describe('SessionEngine', () => {
     run(e, 20, 25, FOCUSED)
     expect(e.snapshot(25_000, cfg).focusMs).toBe(15_000)
   })
+
+  it('끊기지 않은 최장 집중 시간과 시간대별 합계를 센다', () => {
+    const e = new SessionEngine()
+    e.start(0)
+    run(e, 0, 10, FOCUSED)
+    run(e, 10, 17, GRACE)
+    run(e, 17, 20, AWAY)
+    run(e, 20, 26, FOCUSED)
+    const s = e.snapshot(26_000, cfg)
+    // 처음 10초가 최장. 유예 7초는 중단으로 넘어갔으므로 포함하지 않는다.
+    expect(s.longestFocusMs).toBe(10_000)
+    const hours = Object.values(s.byHour)
+    expect(hours.reduce((a, h) => a + h[0], 0)).toBe(s.focusMs)
+    expect(hours.reduce((a, h) => a + h[1], 0)).toBe(s.pausedMs)
+  })
 })
