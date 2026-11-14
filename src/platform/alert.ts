@@ -8,7 +8,10 @@ let ctx: AudioContext | null = null
  */
 export function unlockAudio(): void {
   try {
-    ctx ??= new AudioContext()
+    // 예전 아이폰은 webkit 접두사가 붙은 이름만 제공한다.
+    const Ctor = window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
+    if (!Ctor) return
+    ctx ??= new Ctor()
     void ctx.resume()
   } catch {
     // 소리를 못 내도 화면 표시와 진동으로 알릴 수 있다.

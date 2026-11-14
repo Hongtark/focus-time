@@ -198,8 +198,15 @@ export function useFocusCamera({ settingsRef, onTick }: Options) {
       }
       timer = window.setInterval(tick, TICK_MS)
 
+      // 아이폰은 다른 앱에 다녀오면 영상을 멈춰 두므로 돌아왔을 때 다시 재생한다.
+      const onVisible = () => {
+        if (document.visibilityState === 'visible' && video.paused) void video.play().catch(() => {})
+      }
+      document.addEventListener('visibilitychange', onVisible)
+
       cleanupRef.current = () => {
         clearInterval(timer)
+        document.removeEventListener('visibilitychange', onVisible)
         stream?.getTracks().forEach((tr) => tr.stop())
         detector?.close()
         wake?.release()

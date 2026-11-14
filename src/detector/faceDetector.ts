@@ -4,8 +4,11 @@ import { FaceLandmarker, FilesetResolver } from '@mediapipe/tasks-vision'
 import type { FaceSample } from './focusJudge'
 import { IDENTITY, rotFromMatrix4 } from './pose'
 
-// package.json의 @mediapipe/tasks-vision 버전과 맞춰야 한다.
-const WASM_URL = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm'
+declare const __MEDIAPIPE_VERSION__: string
+
+// 인식 엔진은 앱과 같은 주소에서 받는다(scripts/copy-wasm.mjs가 복사해 둔다).
+const WASM_URL = new URL(`mediapipe-${__MEDIAPIPE_VERSION__}`, document.baseURI).href
+// 인식 모델은 구글 서버에서 받고, 서비스 워커가 저장해 두어 다음부터는 오프라인에서도 쓴다.
 const MODEL_URL =
   'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task'
 

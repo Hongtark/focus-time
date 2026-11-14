@@ -1,3 +1,5 @@
 node_modules
 dist
+# 설치된 패키지에서 복사해 오는 파일 (scripts/copy-wasm.mjs)
+public/mediapipe-*
 *.log

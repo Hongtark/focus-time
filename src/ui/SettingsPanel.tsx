@@ -1,6 +1,7 @@
 import { RAW_LABEL, type FocusCamera } from '../camera/useFocusCamera'
 import { DEFAULT_SETTINGS, type JudgeSettings } from '../detector/focusJudge'
 import { anglesFromRot } from '../detector/pose'
+import { useInstall } from '../platform/install'
 import { DEFAULT_SESSION, type SessionConfig } from '../session/sessionEngine'
 
 interface Props {
@@ -26,6 +27,7 @@ export function SettingsPanel({ cam, sessionActive, config, onConfig, settings, 
   const j = live?.judgement
   const abs = live?.sample.present ? anglesFromRot(live.sample.rot) : null
   const running = cam.phase === 'running'
+  const install = useInstall()
 
   return (
     <>
@@ -47,6 +49,32 @@ export function SettingsPanel({ cam, sessionActive, config, onConfig, settings, 
         />
         <button onClick={() => onConfig(DEFAULT_SESSION)}>기본값으로 (45분 / 15분)</button>
         {sessionActive && <p className="hint">진행 중인 학습에도 바로 적용됩니다.</p>}
+      </section>
+
+      <section className="card">
+        <h2>앱으로 설치</h2>
+        {install.kind === 'installed' && <p className="hint">홈 화면에 설치되어 있습니다. 인터넷이 없어도 열립니다.</p>}
+        {install.kind === 'prompt' && (
+          <>
+            <p className="hint">홈 화면에 아이콘이 생기고, 주소창 없이 전체 화면으로 열립니다. 인터넷이 없어도 동작합니다.</p>
+            <button className="primary wide" onClick={() => void install.install()}>
+              홈 화면에 설치
+            </button>
+          </>
+        )}
+        {install.kind === 'ios' && (
+          <ol className="steps">
+            <li>Safari 아래쪽의 공유 버튼(네모에서 화살표가 올라가는 모양)을 누릅니다.</li>
+            <li>「홈 화면에 추가」를 누릅니다.</li>
+            <li>홈 화면에 생긴 「집중 타이머」 아이콘으로 엽니다.</li>
+          </ol>
+        )}
+        {install.kind === 'manual' && (
+          <p className="hint">브라우저 메뉴(⋮)에서 「홈 화면에 추가」 또는 「앱 설치」를 누르면 설치됩니다.</p>
+        )}
+        {install.kind === 'ios' && (
+          <p className="hint">아이폰은 홈 화면에 추가해 두어야 기록이 오래 보관됩니다.</p>
+        )}
       </section>
 
       <section className="card">
